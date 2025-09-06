@@ -85,34 +85,234 @@ const EXERCISES: Record<string, ExerciseConfig> = {
         color: "#009688" 
       }
     ]
-  },
-  "Walking Posture": {
-    name: "Walking Posture",
-    scoringFunction: scoreWalkingPosture,
-    optimalPoseMarkers: [
-      { 
-        name: "Spine Alignment", 
-        optimalRange: { min: 170, max: 190 }, 
-        color: "#8BC34A" 
-      },
-      { 
-        name: "Hip Levelness", 
-        optimalRange: { min: -30, max: 30 }, 
-        color: "#FFC107" 
-      }
-    ]
   }
 };
 
-export default function ExerciseTracker() {
+// Posture assessment modes
+const POSTURE_MODES: Record<string, { 
+  name: string; 
+  scoringFunction: (keypoints: KP[]) => { score: number; cues: string[] } 
+}> = {
+  "Walking": {
+    name: "Walking Posture",
+    scoringFunction: scoreWalkingPosture
+  }
+};
+
+// Combine all modes for easier selection
+const ALL_MODES = {
+  ...EXERCISES,
+  ...POSTURE_MODES
+};
+
+export default function Posher() {
+  // State management
+  const [activeTab, setActiveTab] = useState<'exercises' | 'posture'>('exercises');
   const [currentExercise, setCurrentExercise] = useState<string>("Hip Hinge");
-  const [status, setStatus] = useState("Loading model...");
+  const [status, setStatus] = useState("Initializing...");
   const [score, setScore] = useState(0);
   const [cues, setCues] = useState<string[]>([]);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isReady, setIsReady] = useState(false);
 
+  // Refs for camera and detection
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const detectorRef = useRef<posedetection.PoseDetector | null>(null);
+
+  // Camera and model initialization
+  useEffect(() => {
+    let cancelled = false;
+    let stream: MediaStream | null = null;
+
+    const initializeModel = async () => {
+      try {
+        // Reset readiness and existing detector
+        setIsReady(false);
+        if (detectorRef.current) {
+          detectorRef.current.dispose();
+          detectorRef.current = null;
+        }
+
+        setStatus("Initializing camera and AI model...");
+
+        // Comprehensive camera access request
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode: "user",
+            width: { ideal: 960, max: 1280 },
+            height: { ideal: 720, max: 1024 }
+          },
+          audio: false
+        });
+
+        const videoElement = videoRef.current;
+        const canvasElement = canvasRef.current;
+
+        if (!videoElement || !canvasElement) {
+          console.error('Video or Canvas element not found');
+          setStatus("Error: Video or Canvas element not initialized");
+          return;
+        }
+
+        // Set up video element
+        videoElement.srcObject = stream;
+        
+        videoElement.onloadedmetadata = async () => {
+          try {
+            await videoElement.play();
+
+            // Initialize TensorFlow backend and pose detector
+            await tf.setBackend("webgl");
+            const detector = await posedetection.createDetector(
+              posedetection.SupportedModels.MoveNet,
+              { modelType: posedetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+            );
+            
+            if (cancelled) return;
+            detectorRef.current = detector;
+
+            // Mark as ready
+            setIsReady(true);
+            setStatus("Camera and AI model ready. Position yourself fully in the frame.");
+          } catch (playError) {
+            console.error('Error playing video or initializing detector:', playError);
+            setStatus(`Initialization error: ${playError instanceof Error ? playError.message : 'Unknown error'}`);
+          }
+        };
+
+      } catch (error) {
+        console.error('Camera Initialization Error:', error);
+        
+        if (error instanceof DOMException) {
+          switch (error.name) {
+            case 'NotAllowedError':
+              setStatus("Camera access denied. Please grant camera permissions.");
+              break;
+            case 'NotFoundError':
+              setStatus("No camera found. Please connect a camera.");
+              break;
+            default:
+              setStatus(`Camera error: ${error.message}`);
+          }
+        } else {
+          setStatus(`Initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      }
+    };
+
+    // Initial call to initialize
+    initializeModel();
+
+    // Cleanup function
+    return () => {
+      cancelled = true;
+      
+      // Stop all tracks
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      
+      // Dispose detector
+      detectorRef.current?.dispose();
+    };
+  }, []);
+
+  // Pose detection and rendering loop
+  useEffect(() => {
+    // Only start processing if ready
+    if (!isReady) return;
+
+    let animationFrameId: number;
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    const detector = detectorRef.current;
+
+    if (!canvas || !video || !detector) {
+      console.warn('Canvas, video, or detector not initialized');
+      return;
+    }
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      console.warn('Could not get 2D rendering context');
+      return;
+    }
+
+    const processFrame = async () => {
+      try {
+        // Always clear the canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw video to canvas
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        }
+
+        // Detect poses
+        const poses = await detector.estimatePoses(video, { 
+          flipHorizontal: false,
+          maxPoses: 1
+        });
+
+        const keypoints = poses[0]?.keypoints as KP[] | undefined;
+
+        if (keypoints) {
+          // Calculate scaling factors
+          const scaleX = canvas.width / video.videoWidth;
+          const scaleY = canvas.height / video.videoHeight;
+
+          // Score the current exercise
+          const exercise = ALL_MODES[currentExercise];
+          
+          let result = { score: 0, cues: ["Position your full body in frame"] };
+          
+          if (exercise) {
+            result = exercise.scoringFunction(keypoints);
+          }
+          
+          setScore(result.score);
+          setCues(result.cues);
+
+          // Draw keypoints
+          ctx.fillStyle = "#00FF88";
+          keypoints.forEach(kp => {
+            if ((kp.score ?? 0) > 0.5) {
+              ctx.beginPath();
+              ctx.arc(
+                kp.x * scaleX,
+                kp.y * scaleY,
+                5, 0, 2 * Math.PI
+              );
+              ctx.fill();
+            }
+          });
+
+          // Restore optimal pose markers for non-posture modes
+          if (EXERCISES[currentExercise]) {
+            (EXERCISES[currentExercise] as ExerciseConfig).optimalPoseMarkers.forEach(marker => {
+              ctx.strokeStyle = marker.color;
+              ctx.lineWidth = 3;
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Error in pose detection:", error);
+        setStatus(`Pose detection failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+
+      // Continue animation loop
+      animationFrameId = requestAnimationFrame(processFrame);
+    };
+
+    // Start the processing loop
+    animationFrameId = requestAnimationFrame(processFrame);
+
+    // Cleanup function
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [currentExercise, isReady]);
 
   // Helper function to check full-body visibility
   const checkFullBodyVisibility = (keypoints: KP[]): { 
@@ -163,284 +363,255 @@ export default function ExerciseTracker() {
     };
   };
 
-  // Model and camera initialization
-  useEffect(() => {
-    let cancelled = false;
-
-    const initializeModel = async () => {
-      try {
-        await tf.setBackend("webgl");
-        const detector = await posedetection.createDetector(
-          posedetection.SupportedModels.MoveNet,
-          { modelType: posedetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
-        );
-        
-        if (cancelled) return;
-        detectorRef.current = detector;
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            facingMode: "user",
-            width: { ideal: 960 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        });
-
-        const videoElement = videoRef.current;
-        if (videoElement) {
-          videoElement.srcObject = stream;
-          // Explicitly set to not mirror
-          videoElement.style.transform = 'scaleX(1)';
-          videoElement.onloadedmetadata = () => {
-            videoElement.play();
-            setStatus("Position yourself fully in the frame");
-          };
-        }
-      } catch (error) {
-        console.error("Initialization error:", error);
-        setStatus("Failed to load camera or model. Check permissions.");
-      }
-    };
-
-    initializeModel();
-
-    return () => {
-      cancelled = true;
-      const videoElement = videoRef.current;
-      const stream = videoElement?.srcObject as MediaStream;
-      stream?.getTracks().forEach(track => track.stop());
-      detectorRef.current?.dispose();
-    };
-  }, []);
-
-  // Pose detection and rendering loop
-  useEffect(() => {
-    let animationFrameId: number;
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    const detector = detectorRef.current;
-
-    if (!canvas || !video || !detector) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const processFrame = async () => {
-      // Prepare canvas
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      // Detect poses
-      const poses = await detector.estimatePoses(video, { flipHorizontal: false });
-      const keypoints = poses[0]?.keypoints as KP[] | undefined;
-
-      if (keypoints) {
-        // Calculate scaling factors
-        const scaleX = canvas.width / video.videoWidth;
-        const scaleY = canvas.height / video.videoHeight;
-
-        // Check full body visibility
-        const { 
-          isFullBodyVisible, 
-          missingBodyParts, 
-          isTooClose 
-        } = checkFullBodyVisibility(keypoints);
-
-        // Adjust status based on body visibility
-        if (isTooClose) {
-          setStatus("Move further back! Full body should be visible.");
-        } else if (!isFullBodyVisible) {
-          setStatus(`Adjust position. Missing: ${missingBodyParts.join(", ")}`);
-        } else {
-          setStatus("Good positioning. Maintain form.");
-        }
-
-        // Score the current exercise only if full body is visible
-        const exercise = EXERCISES[currentExercise];
-        let result = { score: 0, cues: ["Position your full body in frame"] };
-        
-        if (isFullBodyVisible && !isTooClose) {
-          result = exercise.scoringFunction(keypoints);
-        }
-        
-        setScore(result.score);
-        setCues(result.cues);
-
-        // Draw keypoints
-        ctx.fillStyle = isFullBodyVisible && !isTooClose ? "#00FF88" : "#FF4444";
-        keypoints.forEach(kp => {
-          if ((kp.score ?? 0) > 0.5) {
-            ctx.beginPath();
-            ctx.arc(
-              kp.x * scaleX,  // Scale X coordinate
-              kp.y * scaleY,  // Scale Y coordinate
-              5, 0, 2 * Math.PI
-            );
-            ctx.fill();
-          }
-        });
-
-        // Draw optimal pose markers
-        exercise.optimalPoseMarkers.forEach(marker => {
-          // Placeholder for marker drawing logic
-          // You'd need to implement specific angle/position calculations
-          ctx.strokeStyle = marker.color;
-          ctx.lineWidth = 3;
-          // Draw marker visualization
-        });
-      }
-
-      animationFrameId = requestAnimationFrame(processFrame);
-    };
-
-    processFrame();
-
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [currentExercise]);
-
+  // Render method
   return (
     <div style={{ 
       display: 'flex', 
-      flexDirection: 'column', 
-      alignItems: 'center', 
+      height: '100vh',
       fontFamily: 'system-ui, sans-serif',
-      maxWidth: 1000,
-      margin: '0 auto'
+      backgroundColor: '#f0f2f5'
     }}>
+      {/* Sidebar */}
       <div style={{
+        width: sidebarOpen ? 250 : 60,
+        backgroundColor: '#fff',
+        borderRight: '1px solid #e0e0e0',
+        transition: 'width 0.3s ease',
+        overflow: 'hidden',
         display: 'flex',
-        justifyContent: 'space-between',
-        width: '100%',
-        marginBottom: 16
+        flexDirection: 'column'
       }}>
-        {Object.keys(EXERCISES).map(exercise => (
-          <button 
-            key={exercise}
-            onClick={() => setCurrentExercise(exercise)}
-            style={{
-              padding: '10px 20px',
-              background: currentExercise === exercise ? '#111' : '#f0f0f0',
-              color: currentExercise === exercise ? '#fff' : '#000',
-              border: 'none',
-              borderRadius: 8,
-              cursor: 'pointer'
-            }}
-          >
-            {exercise}
-          </button>
-        ))}
-      </div>
-
-      <div style={{ 
-        position: 'relative', 
-        width: '100%', 
-        maxWidth: 960,
-        boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-        borderRadius: 12,
-        overflow: 'hidden'
-      }}>
-        <video 
-          ref={videoRef} 
-          style={{ display: 'none' }} 
-          playsInline 
-        />
-        <canvas 
-          ref={canvasRef}
-          width={960}
-          height={720}
-          style={{ 
-            width: '100%', 
-            height: 'auto', 
-            display: 'block' 
-          }}
-        />
-        
+        {/* Sidebar Toggle */}
         <div style={{
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          background: 'rgba(0,0,0,0.7)',
-          color: 'white',
-          padding: '10px 20px',
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'center'
+          alignItems: 'center',
+          padding: '10px',
+          borderBottom: '1px solid #e0e0e0'
         }}>
-          <div>
-            <strong>Exercise:</strong> {currentExercise}
-          </div>
-          <div>
-            <strong>Score:</strong> {score.toFixed(0)}
-          </div>
+          {sidebarOpen && <h2 style={{ margin: 0, fontSize: '1.2em' }}>Posher</h2>}
+          <button 
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              marginLeft: 'auto'
+            }}
+          >
+            {sidebarOpen ? '←' : '→'}
+          </button>
         </div>
-      </div>
 
-      <div style={{
-        marginTop: 16,
-        width: '100%',
-        background: '#f0f0f0',
-        borderRadius: 8,
-        padding: '15px',
-        textAlign: 'left'
-      }}>
-        <h3 style={{ margin: 0, marginBottom: 10 }}>
-          {currentExercise === "Walking Posture" ? "Posture Recommendations" : "Cues"}
-        </h3>
-        {currentExercise === "Walking Posture" && cues.length > 0 ? (
-          <div>
-            <h4 style={{ margin: '10px 0' }}>Improvement Areas:</h4>
-            <ul style={{ marginTop: 0, paddingLeft: 20 }}>
-              {cues.map((cue, index) => (
-                <li key={index}>{cue}</li>
-              ))}
-            </ul>
-            
-            {/* @ts-ignore */}
-            {result.recommendations && (
-              <>
-                <h4 style={{ margin: '10px 0' }}>Recommended Exercises:</h4>
-                <ul style={{ marginTop: 0, paddingLeft: 20 }}>
-                  {/* @ts-ignore */}
-                  {result.recommendations.exercises.map((exercise, index) => (
-                    <li key={index}>{exercise}</li>
-                  ))}
-                </ul>
-                <div style={{ 
-                  marginTop: 10, 
-                  padding: 10, 
-                  background: '#e0e0e0', 
-                  borderRadius: 6 
-                }}>
-                  <strong>Prescription:</strong>
-                  {/* @ts-ignore */}
-                  {` ${result.recommendations.duration} minutes, ${result.recommendations.frequency}`}
-                </div>
-              </>
+        {/* Tab Selection */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '10px 0'
+        }}>
+          <button 
+            onClick={() => setActiveTab('exercises')}
+            style={{
+              padding: '10px 15px',
+              textAlign: 'left',
+              background: activeTab === 'exercises' ? '#e6f3ff' : 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center'
+            }}
+          >
+            <span style={{ marginRight: 10 }}>💪</span>
+            {sidebarOpen && 'Exercises'}
+          </button>
+          <button 
+            onClick={() => setActiveTab('posture')}
+            style={{
+              padding: '10px 15px',
+              textAlign: 'left',
+              background: activeTab === 'posture' ? '#e6f3ff' : 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center'
+            }}
+          >
+            <span style={{ marginRight: 10 }}>🧘</span>
+            {sidebarOpen && 'Posture Assessment'}
+          </button>
+        </div>
+
+        {/* Exercise/Posture Selection */}
+        {sidebarOpen && (
+          <div style={{
+            flexGrow: 1,
+            overflowY: 'auto',
+            borderTop: '1px solid #e0e0e0',
+            padding: '10px 0'
+          }}>
+            {activeTab === 'exercises' ? (
+              Object.keys(EXERCISES).map(exercise => (
+                <button 
+                  key={exercise}
+                  onClick={() => setCurrentExercise(exercise)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 15px',
+                    textAlign: 'left',
+                    background: currentExercise === exercise ? '#f0f0f0' : 'transparent',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {exercise}
+                </button>
+              ))
+            ) : (
+              Object.keys(POSTURE_MODES).map(mode => (
+                <button 
+                  key={mode}
+                  onClick={() => setCurrentExercise(mode)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 15px',
+                    textAlign: 'left',
+                    background: currentExercise === mode ? '#f0f0f0' : 'transparent',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {mode} Posture
+                </button>
+              ))
             )}
           </div>
-        ) : (
-          cues.length > 0 ? (
-            <ul style={{ margin: 0, paddingLeft: 20 }}>
+        )}
+      </div>
+
+      {/* Main Content Area */}
+      <div style={{ 
+        flexGrow: 1, 
+        display: 'flex', 
+        flexDirection: 'column',
+        padding: '20px',
+        overflowY: 'auto'
+      }}>
+        {/* Camera and Canvas Container */}
+        <div style={{ 
+          position: 'relative', 
+          width: '100%', 
+          maxWidth: 960,
+          margin: '0 auto',
+          boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+          borderRadius: 12,
+          overflow: 'hidden'
+        }}>
+          <video 
+            ref={videoRef} 
+            style={{ display: 'none' }} 
+            playsInline 
+          />
+          <canvas 
+            ref={canvasRef}
+            width={960}
+            height={720}
+            style={{ 
+              width: '100%', 
+              height: 'auto', 
+              display: 'block' 
+            }}
+          />
+          
+          {/* Loading Overlay */}
+          {!isReady && (
+            <div style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              backgroundColor: 'rgba(0,0,0,0.5)',
+              color: 'white',
+              zIndex: 10
+            }}>
+              <div style={{ 
+                textAlign: 'center',
+                padding: 20,
+                backgroundColor: 'rgba(0,0,0,0.7)',
+                borderRadius: 10
+              }}>
+                <div style={{ 
+                  width: 50, 
+                  height: 50, 
+                  border: '4px solid #f3f3f3',
+                  borderTop: '4px solid #3498db',
+                  borderRadius: '50%',
+                  animation: 'spin 1s linear infinite',
+                  margin: '0 auto 20px'
+                }}></div>
+                <p>{status}</p>
+              </div>
+            </div>
+          )}
+          
+          {/* Status and Score Overlay */}
+          <div style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            background: 'rgba(0,0,0,0.7)',
+            color: 'white',
+            padding: '10px 20px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <div>
+              <strong>Current Mode:</strong> {currentExercise}
+            </div>
+            <div>
+              <strong>Score:</strong> {score.toFixed(0)}
+            </div>
+          </div>
+        </div>
+
+        {/* Cues and Recommendations */}
+        <div style={{
+          marginTop: 16,
+          width: '100%',
+          background: '#fff',
+          borderRadius: 8,
+          padding: '15px',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+        }}>
+          <h3 style={{ margin: 0, marginBottom: 10, color: '#333' }}>
+            {activeTab === 'posture' ? 'Posture Recommendations' : 'Exercise Cues'}
+          </h3>
+          {cues.length > 0 ? (
+            <ul style={{ margin: 0, paddingLeft: 20, color: '#666' }}>
               {cues.map((cue, index) => (
                 <li key={index}>{cue}</li>
               ))}
             </ul>
           ) : (
-            <p style={{ margin: 0, color: '#666' }}>Follow the exercise instructions</p>
-          )
-        )}
+            <p style={{ margin: 0, color: '#666' }}>
+              {status}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div style={{
-        marginTop: 16,
-        width: '100%',
-        textAlign: 'center',
-        color: '#666'
-      }}>
-        {status}
-      </div>
+      {/* Add a global style for the spinner animation */}
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }

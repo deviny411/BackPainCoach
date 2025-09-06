@@ -14,7 +14,7 @@ export default function App() {
         marginBottom: 20,
         color: '#333'
       }}>
-        Back Pain Exercise Coach
+        Poshur
       </h1>
       <ExerciseTracker />
     </div>
