@@ -1,69 +1,61 @@
-# React + TypeScript + Vite
+# BackPainCoach
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+BackPainCoach is a React + TypeScript + TensorFlow.js application that helps users **manage and understand back pain** through guided mobility, core exercises, posture assessment, and symptom-based plan generation.
 
-Currently, two official plugins are available:
+It combines **real-time pose detection** with a **clinical-style screening form** to provide safe, personalized guidance.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## Expanding the ESLint configuration
+## ✨ Features
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- **🔍 Symptom Screening**
+  - Form for pain level, duration, location, lifestyle factors (desk hours, sleep, stress).
+  - Identifies *red flags* (e.g. numbness, trauma, fever, bladder/bowel changes).
+  - Provides recommendations: urgent care, go-gentle, or safe to proceed.
 
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- **📋 Personalized Plan**
+  - Generates a session with stretches, core exercises, and daily habit suggestions.
+  - Adapts based on pain severity, duration, and last exercise score.
 
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
+- **🎥 Real-Time Form Coaching**
+  - Uses [TensorFlow.js MoveNet](https://github.com/tensorflow/tfjs-models/tree/master/pose-detection) to track posture.
+  - Supports **hip hinge** and **plank** scoring out of the box (extendable with new exercises).
+  - Live cues appear on screen (e.g. “hips too high”, “spine not neutral”).
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- **📊 Right Panel Guidance**
+  - Tabs for screening results, recovery plan, posture advice, and alternative therapies.
+  - Education on sitting, lifting, sleep positions, and adjunct treatments.
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+- **⚠️ Disclaimers Built-In**
+  - Clear messaging: this is *not* a diagnosis, only education + exercise guidance.
+  - Reminders to seek professional care for red flags or severe/persistent symptoms.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+---
 
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## 🛠 Tech Stack
+
+- **React + TypeScript** – UI + type safety
+- **Vite** – fast dev environment
+- **TensorFlow.js + MoveNet** – real-time pose detection
+- **Inline Styling** – simple responsive UI with cards, modals, and panels
+
+---
+
+## 📂 Key Files
+
+- `PoseCoach.tsx` – Camera setup, pose detection, scoring, canvas overlay with scores + cues.
+- `SymptomForm.tsx` – Form for user symptoms and lifestyle factors.
+- `RightPanel.tsx` – Tabs for screening, plan, posture habits, and alternatives.
+- `ExerciseRunner.tsx` – Step-by-step session runner with PoseCoach integration.
+- `PlanModal.tsx` – Generates a session plan from symptom data.
+- `Shell.tsx` – Layout components (`Card`, `Tag`, etc.).
+
+---
+
+## 🚀 Getting Started
+
+### 1. Install Dependencies
+```bash
+npm install
+npm run dev
+
