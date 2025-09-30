@@ -586,22 +586,51 @@ export default function Posher() {
           background: '#fff',
           borderRadius: 8,
           padding: '15px',
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+          minHeight: 120, // Set a minimum height to prevent layout shifts
+          display: 'flex',
+          flexDirection: 'column'
         }}>
           <h3 style={{ margin: 0, marginBottom: 10, color: '#333' }}>
             {activeTab === 'posture' ? 'Posture Recommendations' : 'Exercise Cues'}
           </h3>
-          {cues.length > 0 ? (
-            <ul style={{ margin: 0, paddingLeft: 20, color: '#666' }}>
-              {cues.map((cue, index) => (
-                <li key={index}>{cue}</li>
-              ))}
-            </ul>
-          ) : (
-            <p style={{ margin: 0, color: '#666' }}>
-              {status}
-            </p>
-          )}
+          <div style={{ 
+            flexGrow: 1, 
+            display: 'flex', 
+            alignItems: 'center',
+            transition: 'opacity 0.3s ease' 
+          }}>
+            {cues.length > 0 ? (
+              <ul style={{ 
+                margin: 0, 
+                paddingLeft: 20, 
+                color: '#666',
+                width: '100%'
+              }}>
+                {cues.map((cue, index) => (
+                  <li 
+                    key={index} 
+                    style={{ 
+                      marginBottom: 5, 
+                      opacity: 1,
+                      transition: 'opacity 0.3s ease'
+                    }}
+                  >
+                    {cue}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p style={{ 
+                margin: 0, 
+                color: '#666',
+                textAlign: 'center',
+                width: '100%'
+              }}>
+                {status}
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
